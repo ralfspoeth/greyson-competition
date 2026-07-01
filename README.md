@@ -42,5 +42,6 @@ cd greyson-competition
 mvn test
 ```
 
-Bump `<jackson.version>` in `pom.xml` to whatever Jackson release you want to
+Bump `<jackson.version>`, `gson.version` and `greyson.version`
+in `pom.xml` to whatever Jackson, Gson and Greyson release you want to
 compare against.
