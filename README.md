@@ -34,9 +34,6 @@ to hand-rolled tree walks while Greyson stays explicit pointer/stream code.
 
 ## Running it
 
-This module depends on the released `io.github.ralfspoeth:json:1.6.0`, so it
-resolves straight from Maven Central:
-
 ```sh
 cd greyson-competition
 mvn test
