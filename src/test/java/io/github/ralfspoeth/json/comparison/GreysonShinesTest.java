@@ -102,8 +102,7 @@ class GreysonShinesTest {
                 }
             });
             case Builder.ArrayBuilder ab -> ab.data().forEach(child -> redact(child, sensitive));
-            case Builder.BasicBuilder _ -> {
-            }
+            case Builder.BasicBuilder _ -> {}
         }
     }
 
@@ -197,6 +196,7 @@ class GreysonShinesTest {
         }
         final long finalGsonCards = gsonCards;
 
+        // making sure the two approaches do the same
         assertAll(
                 () -> assertEquals(List.of("s-1", "s-2"), sessionIds),
                 () -> assertEquals(sessionIds, gsonSessionIds),
