@@ -169,7 +169,7 @@ class GreysonShinesTest {
     void crossCuttingExtractionWithoutASchema() throws IOException {
         // reads source into an optional value
         var doc = Greyson.readValue(Reader.of(EXPORT));
-        //
+        // selecting session ids
         var sessionIds = doc
                 .stream()
                 .flatMap(parse("sessions").select(all()))
