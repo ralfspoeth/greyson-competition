@@ -1,5 +1,6 @@
 package io.github.ralfspoeth.json.comparison;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import io.github.ralfspoeth.json.Greyson;
@@ -196,12 +197,26 @@ class GreysonShinesTest {
         }
         final long finalGsonCards = gsonCards;
 
-        // making sure the two approaches do the same
+        // the Jackson counterpart: manual loops over the JsonNode tree
+        var jacksonDoc = new ObjectMapper().readTree(EXPORT);
+        var jacksonSessionIds = new ArrayList<String>();
+        for (var s : jacksonDoc.get("sessions")) {
+            jacksonSessionIds.add(s.get("id").asText());
+        }
+        long jacksonCards = 0;
+        for (var m : jacksonDoc.get("payment").get("methods")) {
+            if ("card".equals(m.get("type").asText())) jacksonCards++;
+        }
+        final long finalJacksonCards = jacksonCards;
+
+        // making sure all three approaches agree
         assertAll(
                 () -> assertEquals(List.of("s-1", "s-2"), sessionIds),
                 () -> assertEquals(sessionIds, gsonSessionIds),
+                () -> assertEquals(sessionIds, jacksonSessionIds),
                 () -> assertEquals(2L, cards),
-                () -> assertEquals(cards, finalGsonCards)
+                () -> assertEquals(cards, finalGsonCards),
+                () -> assertEquals(cards, finalJacksonCards)
         );
     }
 
