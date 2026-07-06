@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
 import io.github.ralfspoeth.json.Greyson;
 import io.github.ralfspoeth.json.data.Basic;
 import io.github.ralfspoeth.json.data.JsonArray;
@@ -15,7 +17,6 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.Reader;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -26,9 +27,9 @@ import static io.github.ralfspoeth.json.query.Pointer.parse;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * The same schema-less tasks done with Greyson and with Jackson, run side by
- * side so the contrast is executable rather than rhetorical. The two redactions
- * are cross-checked for agreement; the immutability test shows where the two
+ * The same schema-less tasks done with Greyson, Jackson, and Gson, run side by
+ * side so the contrast is executable rather than rhetorical. The three redactions
+ * are cross-checked for agreement; the immutability test shows where the tree
  * models genuinely diverge.
  */
 class RedactionComparisonTest {
@@ -89,9 +90,7 @@ class RedactionComparisonTest {
     static JsonNode jacksonRedact(JsonNode node, Set<String> sensitive) {
         if (node instanceof ObjectNode obj) {
             ObjectNode out = JsonNodeFactory.instance.objectNode();
-            Iterator<Map.Entry<String, JsonNode>> fields = obj.fields();
-            while (fields.hasNext()) {
-                Map.Entry<String, JsonNode> e = fields.next();
+            for (Map.Entry<String, JsonNode> e : obj.properties()) {
                 if (sensitive.contains(e.getKey()) && e.getValue().isTextual()) {
                     out.put(e.getKey(), "***");
                 } else {
@@ -108,6 +107,28 @@ class RedactionComparisonTest {
         }
     }
 
+    // ---- Gson: the same recursive walk, over a mutable JsonElement tree.
+    static JsonElement gsonRedact(JsonElement node, Set<String> sensitive) {
+        if (node.isJsonObject()) {
+            var out = new com.google.gson.JsonObject();
+            for (var e : node.getAsJsonObject().entrySet()) {
+                var v = e.getValue();
+                if (sensitive.contains(e.getKey()) && v.isJsonPrimitive() && v.getAsJsonPrimitive().isString()) {
+                    out.addProperty(e.getKey(), "***");
+                } else {
+                    out.add(e.getKey(), gsonRedact(v, sensitive));
+                }
+            }
+            return out;
+        } else if (node.isJsonArray()) {
+            var out = new com.google.gson.JsonArray();
+            for (var e : node.getAsJsonArray()) out.add(gsonRedact(e, sensitive));
+            return out;
+        } else {
+            return node; // primitives and null are effectively leaves
+        }
+    }
+
     @Test
     void bothRedactionsAgree() throws IOException {
         var mapper = new ObjectMapper();
@@ -115,16 +136,21 @@ class RedactionComparisonTest {
         var greyson = greysonRedact(
                 Greyson.readValue(Reader.of(EXPORT)).orElseThrow(), SENSITIVE::contains);
         var jackson = jacksonRedact(mapper.readTree(EXPORT), SENSITIVE);
+        var gson = gsonRedact(JsonParser.parseString(EXPORT), SENSITIVE);
 
-        // Serialize the Greyson result and re-parse it with Jackson; JsonNode
-        // object equality is order-independent, so this proves the two redactions
-        // produce the same document.
+        // Re-parse the Greyson result with each library; both JsonNode and
+        // JsonElement object equality are order-independent, so this proves all
+        // three redactions produce the same document.
         JsonNode greysonAsJackson = mapper.readTree(greyson.json());
+        JsonElement greysonAsGson = JsonParser.parseString(greyson.json());
 
         assertAll(
                 () -> assertEquals(jackson, greysonAsJackson),
+                () -> assertEquals(gson, greysonAsGson),
                 () -> assertEquals("***", parse("profile/password").stringOrThrow(greyson)),
                 () -> assertEquals("***", jackson.at("/profile/password").asText()),
+                () -> assertEquals("***",
+                        gson.getAsJsonObject().getAsJsonObject("profile").get("password").getAsString()),
                 () -> assertEquals("ada@example.com", jackson.at("/profile/email").asText())
         );
     }
@@ -145,7 +171,7 @@ class RedactionComparisonTest {
 
         // Jackson: nodes are mutable, so immutability needs an explicit full deepCopy().
         JsonNode root = mapper.readTree(EXPORT);
-        ObjectNode copy = (ObjectNode) root.deepCopy();
+        ObjectNode copy = root.deepCopy();
         ((ObjectNode) copy.get("metadata")).put("version", 4);
         assertAll(
                 () -> assertEquals(4, copy.at("/metadata/version").asInt()),

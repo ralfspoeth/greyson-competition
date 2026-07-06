@@ -1,11 +1,14 @@
 package io.github.ralfspoeth.json.comparison;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
 import io.github.ralfspoeth.json.Greyson;
 import io.github.ralfspoeth.json.data.*;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -22,12 +25,12 @@ import static org.junit.jupiter.api.Assertions.*;
  * that must be walked <em>exhaustively</em>, transformed <em>immutably</em>, and
  * queried across irregular nesting — without binding to any POJO.
  *
- * <p>The contrast in a sentence: the equivalent Jackson code reaches for
- * {@code instanceof ObjectNode/ArrayNode/ValueNode} ladders (no compiler-checked
+ * <p>The contrast in a sentence: the equivalent tree-model code reaches for
+ * {@code instanceof}/{@code isJsonObject()} ladders (no compiler-checked
  * exhaustiveness), mutates nodes in place or {@code deepCopy()}s them (no
- * immutability guarantee), and navigates through nullable {@code JsonNode}/
- * {@code MissingNode} rather than {@code Optional}. See
- * {@link RedactionComparisonTest} for the side-by-side Jackson code.</p>
+ * immutability guarantee), and navigates through nullable getters rather than
+ * {@code Optional}. Each test below shows the Gson counterpart alongside the
+ * Greyson code; see {@link RedactionComparisonTest} for the Jackson side too.</p>
  */
 class GreysonShinesTest {
 
@@ -89,12 +92,54 @@ class GreysonShinesTest {
         };
     }
 
+    static void redact(Builder<? extends JsonValue> bldr, Predicate<String> sensitive) {
+        switch (bldr) {
+            case Builder.ObjectBuilder ob -> ob.data().forEach((key, child) -> {
+                if (sensitive.test(key) && child instanceof Builder.BasicBuilder bb && bb.get() instanceof JsonString) {
+                    bb.set(Basic.of("***"));
+                } else {
+                    redact(child, sensitive);
+                }
+            });
+            case Builder.ArrayBuilder ab -> ab.data().forEach(child -> redact(child, sensitive));
+            case Builder.BasicBuilder _ -> {
+            }
+        }
+    }
+
+    // The Gson counterpart: a recursive walk over a mutable JsonElement tree,
+    // with an isJsonObject()/isJsonArray() ladder in place of the sealed switch.
+    static JsonElement gsonRedact(JsonElement node, Set<String> sensitive) {
+        if (node.isJsonObject()) {
+            var out = new com.google.gson.JsonObject();
+            for (var e : node.getAsJsonObject().entrySet()) {
+                var v = e.getValue();
+                if (sensitive.contains(e.getKey()) && v.isJsonPrimitive() && v.getAsJsonPrimitive().isString()) {
+                    out.addProperty(e.getKey(), "***");
+                } else {
+                    out.add(e.getKey(), gsonRedact(v, sensitive));
+                }
+            }
+            return out;
+        } else if (node.isJsonArray()) {
+            var out = new com.google.gson.JsonArray();
+            for (var e : node.getAsJsonArray()) out.add(gsonRedact(e, sensitive));
+            return out;
+        } else {
+            return node;
+        }
+    }
+
     @Test
     void deepRedactionIsExhaustiveAndImmutable() throws IOException {
-        var doc = Greyson.readValue(Reader.of(EXPORT)).orElseThrow();
-        Predicate<String> sensitive = Set.of("password", "token", "secret", "cardNumber")::contains;
+        Set<String> sensitive = Set.of("password", "token", "secret", "cardNumber");
 
-        var clean = redact(doc, sensitive);
+        var docBuilder = Greyson.readBuilder(Reader.of(EXPORT)).orElseThrow();
+        var orig = docBuilder.build();
+        redact(docBuilder, sensitive::contains);
+        var clean = docBuilder.build();
+
+        var gsonClean = gsonRedact(JsonParser.parseString(EXPORT), sensitive);
 
         assertAll(
                 // every sensitive leaf is masked, wherever it sits in the tree
@@ -108,32 +153,55 @@ class GreysonShinesTest {
                 () -> assertEquals(3, parse("metadata/version").intOrThrow(clean)),
                 () -> assertEquals("London", parse("profile/addresses/[0]/city").stringOrThrow(clean)),
                 // and the original document is untouched — redact never mutated it
-                () -> assertEquals("hunter2", parse("profile/password").stringOrThrow(doc)),
+                () -> assertEquals("hunter2", parse("profile/password").stringOrThrow(orig)),
                 () -> assertEquals("4111111111111111",
-                        parse("payment/methods/[0]/cardNumber").stringOrThrow(doc))
+                        parse("payment/methods/[0]/cardNumber").stringOrThrow(orig)),
+                // the Gson counterpart masks the same leaves, via verbose tree navigation
+                () -> assertEquals("***", gsonClean.getAsJsonObject()
+                        .getAsJsonObject("profile").get("password").getAsString()),
+                () -> assertEquals("***", gsonClean.getAsJsonObject()
+                        .getAsJsonObject("payment").getAsJsonArray("methods")
+                        .get(0).getAsJsonObject().get("cardNumber").getAsString())
         );
     }
 
     @Test
     void crossCuttingExtractionWithoutASchema() throws IOException {
-        var doc = Greyson.readValue(Reader.of(EXPORT)).orElseThrow();
-
-        // every session id across the array — no DTO, no TypeReference
-        var sessionIds = parse("sessions").select(all()).apply(doc)
+        // reads source into an optional value
+        var doc = Greyson.readValue(Reader.of(EXPORT));
+        //
+        var sessionIds = doc
+                .stream()
+                .flatMap(parse("sessions").select(all()))
                 .flatMap(s -> s.get("id").stream())
                 .flatMap(v -> v.string().stream())
                 .toList();
 
         // how many payment methods are cards
-        long cards = parse("payment/methods").select(all()).apply(doc)
+        long cards = doc.stream()
+                .flatMap(parse("payment/methods").select(all()))
                 .flatMap(m -> m.get("type").stream())
                 .flatMap(v -> v.string().stream())
                 .filter("card"::equals)
                 .count();
 
+        // the Gson counterpart: manual loops over the JsonElement tree
+        var gsonDoc = JsonParser.parseString(EXPORT).getAsJsonObject();
+        var gsonSessionIds = new ArrayList<String>();
+        for (var s : gsonDoc.getAsJsonArray("sessions")) {
+            gsonSessionIds.add(s.getAsJsonObject().get("id").getAsString());
+        }
+        long gsonCards = 0;
+        for (var m : gsonDoc.getAsJsonObject("payment").getAsJsonArray("methods")) {
+            if ("card".equals(m.getAsJsonObject().get("type").getAsString())) gsonCards++;
+        }
+        final long finalGsonCards = gsonCards;
+
         assertAll(
                 () -> assertEquals(List.of("s-1", "s-2"), sessionIds),
-                () -> assertEquals(2L, cards)
+                () -> assertEquals(sessionIds, gsonSessionIds),
+                () -> assertEquals(2L, cards),
+                () -> assertEquals(cards, finalGsonCards)
         );
     }
 
@@ -146,6 +214,13 @@ class GreysonShinesTest {
         var bumped = parse("metadata/version").with(doc, Basic.of(4));
         var revoked = parse("sessions/[0]").without(bumped);
 
+        // the Gson counterpart: JsonElement is mutable, so leaving the original
+        // intact needs a full deepCopy() — which shares nothing.
+        var gsonRoot = JsonParser.parseString(EXPORT);
+        var gsonProfileBefore = gsonRoot.getAsJsonObject().get("profile");
+        var gsonCopy = gsonRoot.deepCopy();
+        gsonCopy.getAsJsonObject().getAsJsonObject("metadata").addProperty("version", 4);
+
         assertAll(
                 () -> assertEquals(4, parse("metadata/version").intOrThrow(revoked)),
                 () -> assertEquals(1, parse("sessions").require(revoked).elements().size()),
@@ -155,7 +230,14 @@ class GreysonShinesTest {
                 () -> assertEquals(2, parse("sessions").require(doc).elements().size()),
                 // and the untouched "profile" subtree is shared by identity through
                 // both edits — the rebuild touches only objects along each path
-                () -> assertSame(profileBefore, parse("profile").require(revoked))
+                () -> assertSame(profileBefore, parse("profile").require(revoked)),
+                // Gson: the copy is updated and the original stays intact ONLY due to
+                // deepCopy — and, unlike Greyson, the profile subtree is NOT shared
+                () -> assertEquals(4, gsonCopy.getAsJsonObject()
+                        .getAsJsonObject("metadata").get("version").getAsInt()),
+                () -> assertEquals(3, gsonRoot.getAsJsonObject()
+                        .getAsJsonObject("metadata").get("version").getAsInt()),
+                () -> assertNotSame(gsonProfileBefore, gsonCopy.getAsJsonObject().get("profile"))
         );
     }
 }
