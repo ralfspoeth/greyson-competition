@@ -167,21 +167,19 @@ class GreysonShinesTest {
 
     @Test
     void crossCuttingExtractionWithoutASchema() throws IOException {
-        // reads source into an optional value
-        var doc = Greyson.readValue(Reader.of(EXPORT));
-        // selecting session ids
-        var sessionIds = doc
-                .stream()
+        var optValue = Greyson.readValue(Reader.of(EXPORT));
+
+        // one doc into a stream, fan the "sessions" array out, then a typed
+        // accessor for each element's "id"
+        var sessionIds = optValue.stream()
                 .flatMap(parse("sessions").select(all()))
-                .flatMap(s -> s.get("id").stream())
-                .flatMap(v -> v.string().stream())
+                .map(s -> parse("id").stringOrThrow(s))
                 .toList();
 
         // how many payment methods are cards
-        long cards = doc.stream()
+        long cards = optValue.stream()
                 .flatMap(parse("payment/methods").select(all()))
-                .flatMap(m -> m.get("type").stream())
-                .flatMap(v -> v.string().stream())
+                .map(m -> parse("type").stringOrThrow(m))
                 .filter("card"::equals)
                 .count();
 
