@@ -7,18 +7,14 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import io.github.ralfspoeth.json.Greyson;
-import static io.github.ralfspoeth.json.query.Pointer.self;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.Reader;
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.Currency;
-import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.Optional;
+import java.util.*;
 
+import static io.github.ralfspoeth.json.query.Pointer.self;
 import static io.github.ralfspoeth.json.query.Selector.all;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -159,45 +155,46 @@ class PortfolioMappingComparisonTest {
                 .stream()
                 .flatMap(self().member("data").member("portfolios").select(all()))
                 .map(pf -> new Portfolio(
-                        idPtr.stringOrThrow(pf),
-                        self().member("name").stringValue(pf).orElse(idPtr.stringOrThrow(pf)),    // default: the id
-                        Currency.getInstance(refCcyPtr.stringOrThrow(pf)),
-                        pf.get("positions").stream()
-                                .flatMap(all())
-                                .map(pos -> new Position(
-                                        new Instrument(
-                                                isinPtr.stringOrThrow(pos),
-                                                // default: the isin
-                                                instrumentPtr.member("name")
-                                                        .stringValue(pos)
-                                                        .or(() -> isinPtr.stringValue(pos))
+                                idPtr.stringOrThrow(pf),
+                                self().member("name").stringValue(pf).orElse(idPtr.stringOrThrow(pf)),    // default: the id
+                                Currency.getInstance(refCcyPtr.stringOrThrow(pf)),
+                                pf.get("positions")
+                                        .stream()
+                                        .flatMap(all())
+                                        .map(pos -> new Position(
+                                                new Instrument(
+                                                        isinPtr.stringOrThrow(pos),
+                                                        // default: the isin
+                                                        instrumentPtr.member("name")
+                                                                .stringValue(pos)
+                                                                .or(() -> isinPtr.stringValue(pos))
+                                                                .orElseThrow(),
+                                                        insCcyPtr.stringValue(pos)
+                                                                .map(Currency::getInstance)
+                                                                .orElseThrow(),
+                                                        // "%" -> PERCENT, else PCS
+                                                        instrumentPtr.member("quotation")
+                                                                .stringValue(pos)
+                                                                .filter("%"::equals)
+                                                                .map(_ -> Quotation.PERCENT)
+                                                                .orElse(Quotation.PCS)
+                                                ),
+                                                self().member("amount").longOrThrow(pos),
+                                                // default: valueRef when ccy == refCcy
+                                                self().member("valueLocal")
+                                                        .decimalValue(pos)
+                                                        .or(() -> insCcyPtr.stringOrThrow(pos).equals(refCcyPtr.stringOrThrow(pf))
+                                                                ? valueRefPtr.decimalValue(pos)
+                                                                : Optional.empty())
                                                         .orElseThrow(),
-                                                insCcyPtr.stringValue(pos).
-                                                        map(Currency::getInstance)
+                                                // default: instrument ccy
+                                                self().member("localCcy").stringValue(pos)
+                                                        .or(() -> insCcyPtr.stringValue(pos))
+                                                        .map(Currency::getInstance)
                                                         .orElseThrow(),
-                                                // "%" -> PERCENT, else PCS
-                                                instrumentPtr.member("quotation")
-                                                        .stringValue(pos)
-                                                        .filter("%"::equals)
-                                                        .map(_ -> Quotation.PERCENT)
-                                                        .orElse(Quotation.PCS)
-                                        ),
-                                        self().member("amount").longOrThrow(pos),
-                                        // default: valueRef when ccy == refCcy
-                                        self().member("valueLocal")
-                                                .decimalValue(pos)
-                                                .or(() -> insCcyPtr.stringOrThrow(pos).equals(refCcyPtr.stringOrThrow(pf))
-                                                        ? valueRefPtr.decimalValue(pos)
-                                                        : Optional.empty())
-                                                .orElseThrow(),
-                                        // default: instrument ccy
-                                        self().member("localCcy").stringValue(pos)
-                                                .or(() -> insCcyPtr.stringValue(pos))
-                                                .map(Currency::getInstance)
-                                                .orElseThrow(),
-                                        valueRefPtr.decimalOrThrow(pos),
-                                        self().member("percentage").doubleOrThrow(pos))
-                                ).toList()
+                                                valueRefPtr.decimalOrThrow(pos),
+                                                self().member("percentage").doubleOrThrow(pos))
+                                        ).toList()
                         )
                 ).toList();
     }
