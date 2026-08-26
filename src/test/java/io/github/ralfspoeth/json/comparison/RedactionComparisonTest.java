@@ -159,14 +159,17 @@ class RedactionComparisonTest {
     void immutabilityContrast() throws IOException {
         var mapper = new ObjectMapper();
 
-        // Greyson: with() is immutable by construction and shares off-path subtrees.
+        // Greyson: a JsonValue is immutable by type. Editing means taking a
+        // Builder — an explicit mutable copy — and building a new value; no API
+        // exists that could mutate the original.
         var doc = Greyson.readValue(Reader.of(EXPORT)).orElseThrow();
-        var profileBefore = parse("profile").require(doc);
-        var bumped = parse("metadata/version").with(doc, Basic.of(4));
+        var b = doc.builder();
+        parse("metadata/version").set(b, Basic.of(4));
+        var bumped = b.build();
         assertAll(
                 () -> assertEquals(4, parse("metadata/version").intOrThrow(bumped)),
-                () -> assertEquals(3, parse("metadata/version").intOrThrow(doc)),     // original intact
-                () -> assertSame(profileBefore, parse("profile").require(bumped))     // subtree shared
+                // the original is intact — guaranteed by the type, not by discipline
+                () -> assertEquals(3, parse("metadata/version").intOrThrow(doc))
         );
 
         // Jackson: nodes are mutable, so immutability needs an explicit full deepCopy().

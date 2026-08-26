@@ -158,8 +158,7 @@ class PortfolioMappingComparisonTest {
                                 idPtr.stringOrThrow(pf),
                                 self().member("name").stringValue(pf).orElse(idPtr.stringOrThrow(pf)),    // default: the id
                                 Currency.getInstance(refCcyPtr.stringOrThrow(pf)),
-                                pf.get("positions")
-                                        .stream()
+                                pf.get("positions").stream()
                                         .flatMap(all())
                                         .map(pos -> new Position(
                                                 new Instrument(
@@ -399,6 +398,41 @@ class PortfolioMappingComparisonTest {
                 () -> assertEquals(1, greyson.get(3).positions().size()),
                 () -> assertEquals("ZetaInc",
                         greyson.get(3).positions().getFirst().instrument().name())
+        );
+    }
+
+    /**
+     * {@code name} is optional on a portfolio — PF-2 has none — so collecting
+     * "the names that are actually there" is a genuinely lenient read.
+     * {@link io.github.ralfspoeth.json.query.Selector#presentValues} expresses
+     * fan-out + extract + skip-absent in one step; Jackson and Gson have to
+     * spell the null check out inside a loop.
+     */
+    @Test
+    void presentValuesSkipsAbsentOptionalFields() throws IOException {
+        var names = Greyson.readValue(Reader.of(DOC))
+                .stream()
+                .flatMap(self().member("data").member("portfolios").select(all())
+                        .presentValues(pf -> self().member("name").stringValue(pf)))
+                .toList();
+
+        var jacksonNames = new ArrayList<String>();
+        for (JsonNode pf : MAPPER.readTree(DOC).at("/data/portfolios")) {
+            JsonNode n = pf.get("name");
+            if (n != null && !n.isNull()) jacksonNames.add(n.asText());
+        }
+
+        var gsonNames = new ArrayList<String>();
+        for (JsonElement pf : JsonParser.parseString(DOC).getAsJsonObject()
+                .getAsJsonObject("data").getAsJsonArray("portfolios")) {
+            JsonElement n = pf.getAsJsonObject().get("name");
+            if (n != null && !n.isJsonNull()) gsonNames.add(n.getAsString());
+        }
+
+        assertAll(
+                () -> assertEquals(List.of("Growth", "Multi", "Single"), names),
+                () -> assertEquals(names, jacksonNames),
+                () -> assertEquals(names, gsonNames)
         );
     }
 

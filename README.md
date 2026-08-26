@@ -20,9 +20,10 @@ the string value of any sensitive key, at any depth) two ways:
   `else`, over a mutable `JsonNode` tree.
 
 The two results are cross-checked for agreement. A second test contrasts the
-update models: Greyson's `Pointer.with` is immutable by construction and shares
-off-path subtrees, whereas Jackson requires an explicit full `deepCopy()` to
-avoid mutating the shared original.
+update models: a Greyson `JsonValue` is immutable by type — editing means taking
+a `Builder`, applying `Pointer.set`/`remove` to it, and building a new value, so
+the original *cannot* be touched — whereas Jackson requires an explicit full
+`deepCopy()` to avoid mutating the shared original.
 
 `PortfolioMappingComparisonTest` goes wider: it maps a noisy portfolio document
 into a record graph (`Portfolio`/`Position`/`Instrument`) three ways — with

@@ -95,14 +95,17 @@ class GreysonShinesTest {
 
     static void redact(Builder<? extends JsonValue> bldr, Predicate<String> sensitive) {
         switch (bldr) {
-            case Builder.ObjectBuilder ob -> ob.data().forEach((key, child) -> {
-                if (sensitive.test(key) && child instanceof Builder.BasicBuilder bb && bb.get() instanceof JsonString) {
-                    bb.set(Basic.of("***"));
-                } else {
-                    redact(child, sensitive);
-                }
-            });
-            case Builder.ArrayBuilder ab -> ab.data().forEach(child -> redact(child, sensitive));
+            case Builder.ObjectBuilder ob -> ob.data().forEach(
+                    (key, child) -> {
+                        if (sensitive.test(key) && child instanceof Builder.BasicBuilder bb && bb.get() instanceof JsonString) {
+                            bb.set(Basic.of("***"));
+                        } else {
+                            redact(child, sensitive);
+                        }
+                    });
+            case Builder.ArrayBuilder ab -> ab.data().forEach(
+                    child -> redact(child, sensitive)
+            );
             case Builder.BasicBuilder _ -> {}
         }
     }
@@ -221,14 +224,18 @@ class GreysonShinesTest {
     @Test
     void immutableTargetedUpdate() throws IOException {
         var doc = Greyson.readValue(Reader.of(EXPORT)).orElseThrow();
-        var profileBefore = parse("profile").require(doc); // off-path for both edits below
 
-        // bump a nested counter and revoke the first session, both immutably
-        var bumped = parse("metadata/version").with(doc, Basic.of(4));
-        var revoked = parse("sessions/[0]").without(bumped);
+        // take the mutable twin, apply both edits by pointer, build the new value
+        var b = doc.builder();
+        parse("metadata/version").set(b, Basic.of(4));
+        parse("sessions/[0]").remove(b);
+        var revoked = b.build();
 
-        // the Gson counterpart: JsonElement is mutable, so leaving the original
-        // intact needs a full deepCopy() — which shares nothing.
+        // The Gson counterpart. Both libraries copy before editing; the
+        // difference is who guarantees it. Greyson's copy is the Builder, and
+        // the source JsonValue has no mutating API at all. Gson's JsonElement is
+        // mutable, so the deepCopy() below is a convention you must remember —
+        // see the footgun at the end of this test.
         var gsonRoot = JsonParser.parseString(EXPORT);
         var gsonProfileBefore = gsonRoot.getAsJsonObject().get("profile");
         var gsonCopy = gsonRoot.deepCopy();
@@ -238,19 +245,26 @@ class GreysonShinesTest {
                 () -> assertEquals(4, parse("metadata/version").intOrThrow(revoked)),
                 () -> assertEquals(1, parse("sessions").require(revoked).elements().size()),
                 () -> assertEquals("s-2", parse("sessions/[0]/id").stringOrThrow(revoked)),
-                // the original is intact at every step
+                // the source value is intact — it is immutable, so nothing could
+                // have touched it; only the builder copy was edited
                 () -> assertEquals(3, parse("metadata/version").intOrThrow(doc)),
                 () -> assertEquals(2, parse("sessions").require(doc).elements().size()),
-                // and the untouched "profile" subtree is shared by identity through
-                // both edits — the rebuild touches only objects along each path
-                () -> assertSame(profileBefore, parse("profile").require(revoked)),
-                // Gson: the copy is updated and the original stays intact ONLY due to
-                // deepCopy — and, unlike Greyson, the profile subtree is NOT shared
+                // untouched data survives both edits
+                () -> assertEquals("Ada Lovelace", parse("profile/name").stringOrThrow(revoked)),
+                // Gson: the copy is updated and the original stays intact ONLY
+                // because deepCopy() was called
                 () -> assertEquals(4, gsonCopy.getAsJsonObject()
                         .getAsJsonObject("metadata").get("version").getAsInt()),
                 () -> assertEquals(3, gsonRoot.getAsJsonObject()
                         .getAsJsonObject("metadata").get("version").getAsInt()),
                 () -> assertNotSame(gsonProfileBefore, gsonCopy.getAsJsonObject().get("profile"))
         );
+
+        // The footgun Greyson's type system removes: forget the copy and you
+        // mutate the document everyone else is holding.
+        var gsonShared = JsonParser.parseString(EXPORT);
+        gsonShared.getAsJsonObject().getAsJsonObject("metadata").addProperty("version", 99);
+        assertEquals(99, gsonShared.getAsJsonObject()
+                .getAsJsonObject("metadata").get("version").getAsInt());
     }
 }
