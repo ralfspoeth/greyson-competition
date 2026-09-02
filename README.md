@@ -25,6 +25,21 @@ a `Builder`, applying `Pointer.set`/`remove` to it, and building a new value, so
 the original *cannot* be touched — whereas Jackson requires an explicit full
 `deepCopy()` to avoid mutating the shared original.
 
+`ShapeComparisonTest` covers structural checking without a schema — a payload
+nobody controls, no schema document to validate against, and two questions to
+answer from one description: *which records are usable?* and *what exactly is
+wrong with the rest?*
+
+- **Greyson** — a `Shape` states the record's shape once. `parse("records").must(each(RECORD))`
+  reports defects with full paths (`records/[1]/amount: expected number, got string`),
+  and the *same* value filters via `Selector.all().where(RECORD)`.
+- **Jackson / Gson** — neither has a way to *say* the shape, so the walk, the
+  type test, and above all the path assembly are written out by hand, once per
+  field, and again for every new record type.
+
+All three are asserted to flag the same defective paths and keep the same usable
+records, so the contrast is in the code, not the result.
+
 `PortfolioMappingComparisonTest` goes wider: it maps a noisy portfolio document
 into a record graph (`Portfolio`/`Position`/`Instrument`) three ways — with
 **Greyson**, **Jackson**, and **Gson** — and asserts all three produce equal
