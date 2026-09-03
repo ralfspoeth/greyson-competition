@@ -1,4 +1,4 @@
-package io.github.ralfspoeth.json.comparison;
+package io.github.ralfspoeth.greyson.comparison;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;

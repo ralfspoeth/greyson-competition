@@ -1,4 +1,4 @@
-package io.github.ralfspoeth.json.comparison;
+package io.github.ralfspoeth.greyson.comparison;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -162,7 +162,9 @@ class RedactionComparisonTest {
         // Greyson: with() is immutable by construction and shares off-path subtrees.
         var doc = Greyson.readValue(Reader.of(EXPORT)).orElseThrow();
         var profileBefore = parse("profile").require(doc);
-        var bumped = parse("metadata/version").with(doc, Basic.of(4));
+        var bldr = doc.builder();
+        parse("metadata/version").set(bldr, Basic.of(4));
+        var bumped = bldr.build();
         assertAll(
                 () -> assertEquals(4, parse("metadata/version").intOrThrow(bumped)),
                 () -> assertEquals(3, parse("metadata/version").intOrThrow(doc)),     // original intact
