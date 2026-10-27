@@ -17,21 +17,8 @@ import java.util.List;
 import java.util.Map;
 
 import static io.github.ralfspoeth.json.query.Pointer.self;
-import static io.github.ralfspoeth.json.query.Shape.anything;
-import static io.github.ralfspoeth.json.query.Shape.array;
-import static io.github.ralfspoeth.json.query.Shape.exact;
-import static io.github.ralfspoeth.json.query.Shape.exactlyOne;
-import static io.github.ralfspoeth.json.query.Shape.member;
-import static io.github.ralfspoeth.json.query.Shape.nul;
-import static io.github.ralfspoeth.json.query.Shape.number;
-import static io.github.ralfspoeth.json.query.Shape.object;
-import static io.github.ralfspoeth.json.query.Shape.optional;
-import static io.github.ralfspoeth.json.query.Shape.satisfying;
-import static io.github.ralfspoeth.json.query.Shape.string;
-import static org.junit.jupiter.api.Assertions.assertAll;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static io.github.ralfspoeth.json.query.Shape.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Validating a <a href="https://www.jsonrpc.org/specification">JSON-RPC 2.0</a>
@@ -60,15 +47,42 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class JsonRpcComparisonTest {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    /** The request object of JSON-RPC 2.0, as one value. */
+    /**
+     * The request object of JSON-RPC 2.0, as one value.
+     */
     private static final Shape REQUEST = member("jsonrpc", exact(Basic.of("2.0")))
             .and(member("method", string()))
             .and(optional("id", string().or(number()).or(nul())))
             .and(optional("params", array().or(object())));
 
-    /** Message text to whether it is a well-formed request object. */
+    // ---- the response object, §5 ------------------------------------------
+
+    /**
+     * The spec's integers, which {@code number()} alone cannot express.
+     */
+    private static final Shape WHOLE = satisfying("a whole number",
+            v -> v instanceof JsonNumber(var n) && n.stripTrailingZeros().scale() <= 0);
+
+    /**
+     * §5.1: an integer code, a string message, optional unconstrained data. No
+     * leading {@code object()}: each {@code member} already rejects a non-object
+     * with that very complaint, so adding it only multiplies the message.
+     */
+    private static final Shape ERROR = member("code", WHOLE)
+            .and(member("message", string()))
+            .and(optional("data", anything()));
+
+    /**
+     * §5. Note what the request shape did <em>not</em> need: an id that is
+     * required rather than optional, and a choice between two members that must
+     * be exclusive.
+     */
+    private static final Shape RESPONSE = member("jsonrpc", exact(Basic.of("2.0")))
+            .and(member("id", string().or(WHOLE).or(nul())))
+            .and(exactlyOne(Map.of("result", anything(), "error", ERROR)));
+    /**
+     * Message text to whether it is a well-formed request object.
+     */
     private static final Map<String, Boolean> MESSAGES = Map.ofEntries(
             // -- valid ------------------------------------------------------
             Map.entry("""
@@ -102,31 +116,9 @@ class JsonRpcComparisonTest {
                     {"jsonrpc": "2.0", "method": "subtract", "params": "nope", "id": 1}""", false)
     );
 
-    // ---- the response object, §5 ------------------------------------------
-
-    /** The spec's integers, which {@code number()} alone cannot express. */
-    private static final Shape WHOLE = satisfying("a whole number",
-            v -> v instanceof JsonNumber(var n) && n.stripTrailingZeros().scale() <= 0);
-
     /**
-     * §5.1: an integer code, a string message, optional unconstrained data. No
-     * leading {@code object()}: each {@code member} already rejects a non-object
-     * with that very complaint, so adding it only multiplies the message.
+     * Response text to whether it is a well-formed response object.
      */
-    private static final Shape ERROR = member("code", WHOLE)
-            .and(member("message", string()))
-            .and(optional("data", anything()));
-
-    /**
-     * §5. Note what the request shape did <em>not</em> need: an id that is
-     * required rather than optional, and a choice between two members that must
-     * be exclusive.
-     */
-    private static final Shape RESPONSE = member("jsonrpc", exact(Basic.of("2.0")))
-            .and(member("id", string().or(WHOLE).or(nul())))
-            .and(exactlyOne(Map.of("result", anything(), "error", ERROR)));
-
-    /** Response text to whether it is a well-formed response object. */
     private static final Map<String, Boolean> RESPONSES = Map.ofEntries(
             // -- valid ------------------------------------------------------
             Map.entry("""
@@ -181,7 +173,11 @@ class JsonRpcComparisonTest {
                 .isPresent();
     }
 
-    // Jackson. Two rules get noticeably harder than in the request: the
+    // Jackson.
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    // Two rules get noticeably harder than in the request: the
     // exclusive choice becomes a presence count, and "integer" has to avoid
     // isIntegralNumber(), which asks whether the *node* is an integer type -
     // false for -1.0, which is an integer value. decimalValue() is the honest
@@ -241,7 +237,8 @@ class JsonRpcComparisonTest {
     @Test
     void greysonLocatesTheDefectInsideTheErrorObject() throws IOException {
         var doc = Greyson.readValue(Reader.of("""
-                {"jsonrpc": "2.0", "error": {"code": -1.5, "message": "x"}, "id": 1}""")).orElseThrow();
+                {"jsonrpc": "2.0", "error": {"code": -1.5, "message": "x"}, "id": 1}"""
+        )).orElseThrow();
 
         // exactly one of result/error is present, so its own violations come
         // through under its key. An exclusive-or of member() shapes would have
@@ -254,9 +251,11 @@ class JsonRpcComparisonTest {
     @Test
     void greysonNamesWhichSideOfTheChoiceWentWrong() throws IOException {
         var both = Greyson.readValue(Reader.of("""
-                {"jsonrpc": "2.0", "result": 7, "error": {"code": -1, "message": "x"}, "id": 1}""")).orElseThrow();
+                {"jsonrpc": "2.0", "result": 7, "error": {"code": -1, "message": "x"}, "id": 1}"""
+        )).orElseThrow();
         var neither = Greyson.readValue(Reader.of("""
-                {"jsonrpc": "2.0", "id": 1}""")).orElseThrow();
+                {"jsonrpc": "2.0", "id": 1}"""
+        )).orElseThrow();
 
         assertAll(
                 () -> assertEquals(
