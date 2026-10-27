@@ -68,6 +68,16 @@ into `"42"`, Gson's `getAsString()` does the same — so the *shorter* code is t
 wrong code. All twelve messages are classified identically by all three; only
 Greyson can say why.
 
+The same test then does the **response** object, where two rules get harder.
+`result` and `error` are mutually exclusive, which `exactlyOne` states and the
+others turn into a presence count; and `error.code` must be an *integer*, where
+Jackson's obvious `isIntegralNumber()` asks whether the **node** is an integer
+type — false for `-1.0`, which is an integer value — so the honest check is
+`decimalValue().stripTrailingZeros()`, and Gson has nothing to be tempted by at
+all. Greyson's advantage is the diagnostic: a bad code inside a well-formed
+error reports `error/code: expected a whole number, got -1.5`, under its key,
+while the two booleans can only say "no".
+
 ### Duplicate member names
 
 `DuplicateKeyComparisonTest` settles what all three do with `{"a": 1, "a": 2}`:
