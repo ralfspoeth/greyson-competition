@@ -47,6 +47,8 @@ the same value via `Selector.where`. Jackson and Gson have no way to *say* the
 shape, so the walk, the type test and above all the path assembly are written
 out by hand.
 
+### A real specification: JSON-RPC 2.0
+
 `JsonRpcComparisonTest` takes that to a real specification. The
 [JSON-RPC 2.0](https://www.jsonrpc.org/specification) request object is a good
 test of a shape language because its rules are not merely "these members, those
